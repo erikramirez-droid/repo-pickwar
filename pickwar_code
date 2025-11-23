@@ -1,0 +1,158 @@
+//=======================================================
+// CONFIGURACIÓN PIC16F877A
+//=======================================================
+#define _XTAL_FREQ 4000000UL
+#include <xc.h>
+
+#pragma config FOSC = XT
+#pragma config WDTE = OFF
+#pragma config PWRTE = OFF
+#pragma config BOREN = ON
+#pragma config LVP = OFF
+#pragma config CPD = OFF
+#pragma config WRT = OFF
+#pragma config CP = OFF
+
+//=======================================================
+// PINES
+//=======================================================
+
+// Ultrasonido
+#define TRIG PORTBbits.RB0
+#define ECHO PORTBbits.RB1
+
+// Motores (L298N)
+#define M1_IN1 PORTDbits.RD0
+#define M1_IN2 PORTDbits.RD1
+#define M2_IN1 PORTDbits.RD2
+#define M2_IN2 PORTDbits.RD3
+
+// LEDs
+#define LED_SYSTEM PORTCbits.RC0   // LED de encendido
+#define LED_STATE  PORTCbits.RC1   // LED de estados
+
+//=======================================================
+// MOVIMIENTOS
+//=======================================================
+void avanzar(void){
+    M1_IN1 = 1; M1_IN2 = 0;
+    M2_IN1 = 1; M2_IN2 = 0;
+}
+
+void retroceder(void){
+    M1_IN1 = 0; M1_IN2 = 1;
+    M2_IN1 = 0; M2_IN2 = 1;
+}
+
+// Gira sobre su propio eje de forma agresiva
+void giro_eje(void){
+    M1_IN1 = 1; M1_IN2 = 0;   // motor izquierdo adelante
+    M2_IN1 = 0; M2_IN2 = 1;   // motor derecho atrás
+}
+
+void giro_derecha(void){
+    M1_IN1 = 1; M1_IN2 = 0;
+    M2_IN1 = 0; M2_IN2 = 1;
+}
+
+void parar(void){
+    M1_IN1 = 0; M1_IN2 = 0;
+    M2_IN1 = 0; M2_IN2 = 0;
+}
+
+//=======================================================
+// SENSOR ULTRASONIDO
+//=======================================================
+unsigned int medir_distancia(void){
+    unsigned int t = 0;
+    unsigned int timeout = 0;
+
+    // Pulso de disparo TRIG
+    TRIG = 0; __delay_us(2);
+    TRIG = 1; __delay_us(10);
+    TRIG = 0;
+
+    // Esperar subida
+    while(!ECHO && timeout < 20000){
+        timeout++;
+        __delay_us(1);
+    }
+    if(timeout >= 20000) return 0; // no detecta nada
+
+    // Medir duración del pulso ECHO
+    t = 0;
+    while(ECHO && t < 30000){
+        t++;
+        __delay_us(1);
+    }
+
+    return (t / 58); // microsegundos → cm
+}
+
+//=======================================================
+// INICIALIZACIÓN
+//=======================================================
+void init_pic(void){
+    ADCON1 = 0x07;  // Todo digital
+
+    TRISBbits.TRISB0 = 0; // TRIG salida
+    TRISBbits.TRISB1 = 1; // ECHO entrada
+
+    TRISD = 0x00; // RD0-RD3 salidas motores
+
+    TRISCbits.TRISC0 = 0; // LED sistema
+    TRISCbits.TRISC1 = 0; // LED estados
+
+    PORTB = 0;
+    PORTC = 0;
+    PORTD = 0;
+}
+
+//=======================================================
+// PROGRAMA PRINCIPAL
+//=======================================================
+void main(void){
+
+    unsigned int d;
+
+    init_pic();
+    LED_SYSTEM = 1; // LED del sistema siempre encendido
+
+    while(1){
+
+        d = medir_distancia();
+
+        //==================== ESTADO 1 — BÚSQUEDA ====================
+        if(d == 0 || d > 30){
+            // LED parpadeo LENTO
+            LED_STATE = 1; __delay_ms(300);
+            LED_STATE = 0; __delay_ms(300);
+
+            giro_eje();  // girar sobre su propio eje
+        }
+
+        //==================== ESTADO 2 — PERSECUCIÓN =================
+        else if(d <= 30 && d > 15){
+            LED_STATE = 1; // LED fijo
+            avanzar();
+        }
+
+        //==================== ESTADO 3 — ATAQUE / ESQUIVA CERCANA ====
+        else if(d <= 15){
+            // LED parpadeo RÁPIDO
+            LED_STATE = 1; __delay_ms(80);
+            LED_STATE = 0; __delay_ms(80);
+
+            retroceder();
+            __delay_ms(600);
+
+            giro_derecha();
+            __delay_ms(600);
+
+            avanzar();
+            __delay_ms(400);
+        }
+
+        __delay_ms(20);
+    }
+}
